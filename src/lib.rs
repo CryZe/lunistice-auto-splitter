@@ -37,7 +37,7 @@ impl GameInfo {
     fn load(process: &Process) -> Result<Self, ()> {
         let module = process.get_module("GameAssembly.dll").map_err(drop)?;
         // _assembliesTrg signature scan
-        let mut arr: Ptr<Ptr<MonoAssembly>> = process.read(module + 0x25CACD8u64).map_err(drop)?;
+        let mut arr: Ptr<Ptr<MonoAssembly>> = process.read(module + 0x25D4848u64).map_err(drop)?;
 
         let image = loop {
             let ptr = arr.read(process)?;

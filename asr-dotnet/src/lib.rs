@@ -346,7 +346,7 @@ impl MonoImage {
     ) -> Result<impl Iterator<Item = MonoClass> + 'a, ()> {
         let module = process.get_module("GameAssembly.dll").map_err(drop)?;
         let type_info_definition_table: Ptr<Ptr<MonoClass>> =
-            process.read(module + 0x25CB530u64).map_err(drop)?;
+            process.read(module + 0x25D50A0u64).map_err(drop)?;
         let ptr = type_info_definition_table
             .offset(self.metadata_handle.read(process).unwrap_or_default() as _);
         Ok((0..self.type_count as usize).filter_map(move |i| {
