@@ -37,7 +37,7 @@ impl GameInfo {
     fn load(process: &Process) -> Result<Self, ()> {
         let module = process.get_module("GameAssembly.dll").map_err(drop)?;
         // _assembliesTrg signature scan
-        let mut arr: Ptr<Ptr<MonoAssembly>> = process.read(module + 0x25D4848u64).map_err(drop)?;
+        let mut arr: Ptr<Ptr<MonoAssembly>> = process.read(module + 0x26E83E8u64).map_err(drop)?;
 
         let image = loop {
             let ptr = arr.read(process)?;
@@ -116,18 +116,24 @@ impl Digits {
 
 impl GameManager {
     fn stage(&self) -> i32 {
-        (self.currentLevel / 2) + 1
+        ((self.currentLevel / 2) + 1).min(7)
     }
 
-    fn act(&self) -> i32 {
-        (self.currentLevel & 1) + 1
+    fn act(&self) -> char {
+        if self.currentLevel == LEVEL_7_X {
+            'X'
+        } else if self.currentLevel & 1 == 0 {
+            '1'
+        } else {
+            '2'
+        }
     }
 
     fn format_level_into<const N: usize>(&self, string: &mut ArrayString<N>) {
         let mut buffer = itoa::Buffer::new();
         let _ = string.try_push_str(buffer.format(self.stage()));
         let _ = string.try_push('-');
-        let _ = string.try_push_str(buffer.format(self.act()));
+        let _ = string.try_push(self.act());
     }
 }
 
@@ -143,8 +149,14 @@ struct GameManager {
 struct Timer {
     currentLevelTime: f32,
     currentLevelTimeVector: Digits,
+    timerStopped: u8,
     character: u32,
 }
+
+const LEVEL_1_1: i32 = 0;
+const LEVEL_2_1: i32 = 2;
+const LEVEL_7_2: i32 = 13;
+const LEVEL_7_X: i32 = 14;
 
 #[allow(unused)]
 mod game_state {
@@ -174,7 +186,8 @@ struct State {
     process_info: Option<ProcessInfo>,
     timer: Watcher<Timer>,
     game_manager: Watcher<GameManager>,
-    run_time: f32,
+    run_time: Duration,
+    beyond_first_level: bool,
 }
 
 impl State {
@@ -222,22 +235,33 @@ impl State {
 
                     match timer::state() {
                         TimerState::NotRunning => {
-                            if game_manager.old.currentLevel == 1
-                                && game_manager.current.currentLevel == 2
+                            if timer.check(|t| t.timerStopped == 0)
+                                && game_manager.currentLevel == LEVEL_1_1
                             {
-                                self.run_time = 0.0;
+                                self.run_time = Duration::ZERO;
+                                self.beyond_first_level = false;
                                 timer::start();
                                 timer::pause_game_time();
                             }
                         }
                         TimerState::Paused | TimerState::Running => {
                             if timer.current.currentLevelTime < timer.old.currentLevelTime {
-                                self.run_time += timer.old.currentLevelTime;
+                                if !self.beyond_first_level {
+                                    timer::reset();
+                                    return;
+                                }
+                                self.run_time += Duration::seconds_f32(timer.old.currentLevelTime);
                             }
-                            timer::set_game_time(Duration::seconds_f32(
-                                self.run_time + timer.currentLevelTime,
-                            ));
-                            if game_manager.check(|g| g.gameState == game_state::RESULTS) {
+
+                            timer::set_game_time(
+                                self.run_time + Duration::seconds_f32(timer.currentLevelTime),
+                            );
+
+                            if game_manager.check(|g| g.gameState == game_state::RESULTS)
+                                || (game_manager.old.currentLevel >= LEVEL_7_2
+                                    && game_manager.current.currentLevel == LEVEL_2_1)
+                            {
+                                self.beyond_first_level = true;
                                 timer::split();
                             }
                         }
@@ -253,7 +277,8 @@ static STATE: Spinlock<State> = const_spinlock(State {
     process_info: None,
     timer: Watcher::new(),
     game_manager: Watcher::new(),
-    run_time: 0.0,
+    run_time: Duration::ZERO,
+    beyond_first_level: false,
 });
 
 #[no_mangle]
