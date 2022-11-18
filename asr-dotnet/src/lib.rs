@@ -7,7 +7,7 @@ use core::{
     slice,
 };
 
-use asr::{Address, Process};
+use asr::{signature::Signature, Address, Process};
 
 pub use asr;
 pub use asr_dotnet_derive::*;
@@ -343,11 +343,10 @@ impl MonoImage {
     pub fn classes<'a>(
         &'a self,
         process: &'a Process,
+        mono_module: &MonoModule,
     ) -> Result<impl Iterator<Item = MonoClass> + 'a, ()> {
-        let module = process.get_module("GameAssembly.dll").map_err(drop)?;
-        let type_info_definition_table: Ptr<Ptr<MonoClass>> =
-            process.read(module + 0x26E8C40u64).map_err(drop)?;
-        let ptr = type_info_definition_table
+        let ptr = mono_module
+            .type_info_definition_table
             .offset(self.metadata_handle.read(process).unwrap_or_default() as _);
         Ok((0..self.type_count as usize).filter_map(move |i| {
             let class_ptr = ptr.index(process, i).ok()?;
@@ -698,4 +697,78 @@ pub fn g_str_hash_with_artificial_nul_terminator(value: &[u8]) -> u32 {
         hash = (hash << 5).wrapping_sub(hash.wrapping_add(c as u32));
     });
     hash
+}
+
+pub struct MonoModule {
+    pub assemblies: Ptr<Ptr<MonoAssembly>>,
+    pub type_info_definition_table: Ptr<Ptr<MonoClass>>,
+}
+
+static ASSEMBLIES_TRG_SIG: Signature<12> = Signature::new("48 FF C5 80 3C ?? 00 75 ?? 48 8B 1D");
+static TYPE_INFO_DEFINITION_TABLE_TRG_SIG: Signature<10> =
+    Signature::new("48 83 3C ?? 00 75 ?? 8B C? E8");
+
+impl MonoModule {
+    pub fn locate(process: &Process) -> Result<Self, ()> {
+        let mono_module_addr = process
+            .get_module_address("GameAssembly.dll")
+            .map_err(drop)?;
+
+        // TODO: Get module size
+        let mono_module_size = 44_000_000; // process.get_module_size("GameAssembly.dll").map_err(drop)?;
+
+        let addr = ASSEMBLIES_TRG_SIG
+            .scan_process_range(process, mono_module_addr, mono_module_size)
+            .ok_or(())?
+            + 12u64;
+
+        let assemblies_trg_addr = from_relative_address(addr, process)?;
+
+        let assemblies: Ptr<Ptr<MonoAssembly>> = process.read(assemblies_trg_addr).map_err(drop)?;
+
+        // TODO: Allow sub on Address directly
+        let addr = Address(
+            TYPE_INFO_DEFINITION_TABLE_TRG_SIG
+                .scan_process_range(process, mono_module_addr, mono_module_size)
+                .ok_or(())?
+                .0
+                - 4u64,
+        );
+
+        let type_info_definition_table_trg_addr = from_relative_address(addr, process)?;
+        let type_info_definition_table: Ptr<Ptr<MonoClass>> = process
+            .read(type_info_definition_table_trg_addr)
+            .map_err(drop)?;
+
+        Ok(Self {
+            assemblies,
+            type_info_definition_table,
+        })
+    }
+
+    pub fn find_image(&self, process: &Process, assembly_name: &str) -> Result<MonoImage, ()> {
+        let mut assemblies: Ptr<Ptr<MonoAssembly>> = self.assemblies;
+        let image = loop {
+            let ptr = assemblies.read(process)?;
+            if ptr.is_null() {
+                return Err(());
+            }
+            let mono_assembly = ptr.read(process)?;
+            if mono_assembly
+                .aname
+                .name
+                .read_str(process, |name| name == assembly_name.as_bytes())
+            {
+                break mono_assembly.image.read(process)?;
+            }
+            assemblies = assemblies.offset(1);
+        };
+        Ok(image)
+    }
+}
+
+fn from_relative_address(addr: Address, process: &Process) -> Result<Address, ()> {
+    Ok(Address(
+        (addr.0 as i64 + 4i64 + process.read::<i32>(addr).map_err(drop)? as i64) as u64,
+    ))
 }

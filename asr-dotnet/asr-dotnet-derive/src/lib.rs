@@ -110,9 +110,9 @@ pub fn mono_class_binding(input: TokenStream) -> TokenStream {
             }
 
             impl #struct_name {
-                fn bind(image: &MonoImage, process: &Process) -> Result<#binding_name, ()> {
+                fn bind(image: &MonoImage, process: &Process, mono_module: &MonoModule) -> Result<#binding_name, ()> {
                     let class = image
-                            .classes(process)?
+                            .classes(process, mono_module)?
                             .find(|c| {
                                 c
                                     .name

@@ -10,7 +10,7 @@ use asr_dotnet::{
         watcher::Watcher,
         Process,
     },
-    MonoAssembly, MonoClass, MonoClassBinding, MonoImage, Ptr,
+    MonoClass, MonoClassBinding, MonoImage, MonoModule, Ptr,
 };
 use bytemuck::{Pod, Zeroable};
 use spinning_top::{const_spinlock, Spinlock};
@@ -35,34 +35,20 @@ struct ProcessInfo {
 
 impl GameInfo {
     fn load(process: &Process) -> Result<Self, ()> {
-        let module = process.get_module("GameAssembly.dll").map_err(drop)?;
-        // _assembliesTrg signature scan
-        let mut arr: Ptr<Ptr<MonoAssembly>> = process.read(module + 0x26E83E8u64).map_err(drop)?;
+        let mono_module = MonoModule::locate(process)?;
 
-        let image = loop {
-            let ptr = arr.read(process)?;
-            if ptr.is_null() {
-                return Err(());
-            }
-            let mono_assembly = ptr.read(process)?;
-            if mono_assembly
-                .aname
-                .name
-                .read_str(process, |name| name == b"Assembly-CSharp")
-            {
-                break mono_assembly.image.read(process)?;
-            }
-            arr = arr.offset(1);
-        };
+        asr::print_message("Found signatures");
+
+        let image = mono_module.find_image(process, "Assembly-CSharp")?;
 
         asr::print_message("Found Assembly-CSharp");
 
-        let timer_binding = Timer::bind(&image, process)?;
+        let timer_binding = Timer::bind(&image, process, &mono_module)?;
         let timer_instance = timer_binding.class.find_singleton(process, "_instance")?;
 
         asr::print_message("Found Timer");
 
-        let game_manager_binding = GameManager::bind(&image, process)?;
+        let game_manager_binding = GameManager::bind(&image, process, &mono_module)?;
         let game_manager_instance = game_manager_binding
             .class
             .find_singleton(process, "<Instance>k__BackingField")?;

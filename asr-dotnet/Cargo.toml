@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-asr = { git = "https://github.com/CryZe/asr" }
+asr = { git = "https://github.com/CryZe/asr", features = ["signature"] }
 bytemuck = { version = "1.9.1", features = ["derive", "min_const_generics"] }
 bstr = { version = "1.0.1", default-features = false }
 asr-dotnet-derive = { path = "asr-dotnet-derive" }

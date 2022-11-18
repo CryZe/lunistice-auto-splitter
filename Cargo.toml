@@ -18,7 +18,11 @@ crate-type = ["cdylib"]
 [profile.release]
 lto = true
 panic = "abort"
+codegen-units = 1
 strip = true
 
 [profile.release.build-override]
 opt-level = 0
+
+[patch.crates-io]
+time = { git = "https://github.com/time-rs/time" }
