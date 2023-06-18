@@ -7,7 +7,7 @@ use core::{
     slice,
 };
 
-use asr::{signature::Signature, Address, Process};
+use asr::{future::retry, signature::Signature, Address, Address64, Process};
 
 pub use asr;
 pub use asr_dotnet_derive::*;
@@ -19,18 +19,18 @@ pub struct CStr;
 
 #[derive(Copy, Clone)]
 #[repr(transparent)]
-pub struct Ptr<T = ()>(u64, PhantomData<T>);
+pub struct Ptr<T = ()>(Address64, PhantomData<T>);
 
 unsafe impl<T: 'static + Copy> Pod for Ptr<T> {}
 unsafe impl<T> Zeroable for Ptr<T> {}
 
 impl<T> Ptr<T> {
     fn addr(self) -> Address {
-        Address(self.0)
+        self.0.into()
     }
 
     pub fn is_null(&self) -> bool {
-        self.0 == 0
+        self.0.is_null()
     }
 
     pub fn cast<U>(self) -> Ptr<U> {
@@ -38,11 +38,14 @@ impl<T> Ptr<T> {
     }
 
     pub fn byte_offset(self, bytes: u64) -> Self {
-        Self(self.0 + bytes, PhantomData)
+        Self(self.0.add(bytes), PhantomData)
     }
 
     pub fn offset(self, count: u64) -> Self {
-        Self(self.0 + count * mem::size_of::<T>() as u64, PhantomData)
+        Self(
+            self.0.add(count.wrapping_mul(mem::size_of::<T>() as u64)),
+            PhantomData,
+        )
     }
 }
 
@@ -69,11 +72,11 @@ impl Ptr<CStr> {
             // page, which is safe to read either fully or not at all. We do
             // this to do a single read rather than many small ones as the
             // syscall overhead is a quite high.
-            let end = (addr.0 & !((4 << 10) - 1)) + (4 << 10);
+            let end = (addr.value() & !((4 << 10) - 1)) + (4 << 10);
             // However we limit it to 256 bytes as 512 bytes is roughly the
             // break even point in terms of syscall overhead and realistic
             // string sizes are probably even smaller than that.
-            let len = (end - addr.0).min(256);
+            let len = (end - addr.value()).min(256);
             let (current_read_buf, after) = cursor.split_at_mut(len as usize);
             cursor = after;
             let current_read_buf = process
@@ -111,7 +114,7 @@ impl<T> fmt::Debug for Ptr<T> {
         if self.is_null() {
             f.write_str("NULL")
         } else {
-            write!(f, "{:x}", self.0)
+            write!(f, "{}", self.0)
         }
     }
 }
@@ -709,41 +712,33 @@ static TYPE_INFO_DEFINITION_TABLE_TRG_SIG: Signature<10> =
     Signature::new("48 83 3C ?? 00 75 ?? 8B C? E8");
 
 impl MonoModule {
-    pub fn locate(process: &Process) -> Result<Self, ()> {
-        let mono_module_addr = process
-            .get_module_address("GameAssembly.dll")
-            .map_err(drop)?;
-
-        // TODO: Get module size
-        let mono_module_size = 44_000_000; // process.get_module_size("GameAssembly.dll").map_err(drop)?;
+    pub async fn locate(process: &Process) -> Self {
+        let mono_module = process.wait_module_range("GameAssembly.dll").await;
 
         let addr = ASSEMBLIES_TRG_SIG
-            .scan_process_range(process, mono_module_addr, mono_module_size)
-            .ok_or(())?
+            .wait_scan_process_range(process, mono_module)
+            .await
             + 12u64;
 
-        let assemblies_trg_addr = from_relative_address(addr, process)?;
+        let assemblies_trg_addr = retry(|| from_relative_address(addr, process)).await;
 
-        let assemblies: Ptr<Ptr<MonoAssembly>> = process.read(assemblies_trg_addr).map_err(drop)?;
+        let assemblies: Ptr<Ptr<MonoAssembly>> = retry(|| process.read(assemblies_trg_addr)).await;
 
-        // TODO: Allow sub on Address directly
-        let addr = Address(
-            TYPE_INFO_DEFINITION_TABLE_TRG_SIG
-                .scan_process_range(process, mono_module_addr, mono_module_size)
-                .ok_or(())?
-                .0
-                - 4u64,
-        );
+        let addr = TYPE_INFO_DEFINITION_TABLE_TRG_SIG
+            .wait_scan_process_range(process, mono_module)
+            .await
+            .add_signed(-4);
 
-        let type_info_definition_table_trg_addr = from_relative_address(addr, process)?;
-        let type_info_definition_table: Ptr<Ptr<MonoClass>> = process
-            .read(type_info_definition_table_trg_addr)
-            .map_err(drop)?;
+        let type_info_definition_table_trg_addr =
+            retry(|| from_relative_address(addr, process)).await;
 
-        Ok(Self {
+        let type_info_definition_table: Ptr<Ptr<MonoClass>> =
+            retry(|| process.read(type_info_definition_table_trg_addr)).await;
+
+        Self {
             assemblies,
             type_info_definition_table,
-        })
+        }
     }
 
     pub fn find_image(&self, process: &Process, assembly_name: &str) -> Result<MonoImage, ()> {
@@ -768,7 +763,5 @@ impl MonoModule {
 }
 
 fn from_relative_address(addr: Address, process: &Process) -> Result<Address, ()> {
-    Ok(Address(
-        (addr.0 as i64 + 4i64 + process.read::<i32>(addr).map_err(drop)? as i64) as u64,
-    ))
+    Ok(addr.add(4) + process.read::<i32>(addr).map_err(drop)?)
 }

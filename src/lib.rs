@@ -5,6 +5,8 @@ use arrayvec::ArrayString;
 use asr_dotnet::{
     asr::{
         self,
+        future::{next_tick, retry},
+        print_message,
         time::Duration,
         timer::{self, TimerState},
         watcher::Watcher,
@@ -13,13 +15,8 @@ use asr_dotnet::{
     MonoClass, MonoClassBinding, MonoImage, MonoModule, Ptr,
 };
 use bytemuck::{Pod, Zeroable};
-use spinning_top::{const_spinlock, Spinlock};
 
-#[cfg(all(not(test), target_arch = "wasm32"))]
-#[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    core::arch::wasm32::unreachable()
-}
+asr::panic_handler!();
 
 struct GameInfo {
     timer_instance: Ptr,
@@ -28,47 +25,39 @@ struct GameInfo {
     game_manager_binding: GameManagerBinding,
 }
 
-struct ProcessInfo {
-    process: Process,
-    game_info: Option<GameInfo>,
-}
-
 impl GameInfo {
-    fn load(process: &Process) -> Result<Self, ()> {
-        let mono_module = MonoModule::locate(process)?;
+    async fn load(process: &Process) -> Self {
+        let mono_module = MonoModule::locate(process).await;
 
-        asr::print_message("Found signatures");
+        print_message("Found Mono");
 
-        let image = mono_module.find_image(process, "Assembly-CSharp")?;
+        let image = retry(|| mono_module.find_image(process, "Assembly-CSharp")).await;
 
-        asr::print_message("Found Assembly-CSharp");
+        print_message("Found Assembly-CSharp");
 
-        let timer_binding = Timer::bind(&image, process, &mono_module)?;
-        let timer_instance = timer_binding.class.find_singleton(process, "_instance")?;
+        let timer_binding = retry(|| Timer::bind(&image, process, &mono_module)).await;
 
-        asr::print_message("Found Timer");
+        let timer_instance =
+            retry(|| timer_binding.class.find_singleton(process, "_instance")).await;
 
-        let game_manager_binding = GameManager::bind(&image, process, &mono_module)?;
-        let game_manager_instance = game_manager_binding
-            .class
-            .find_singleton(process, "<Instance>k__BackingField")?;
+        print_message("Found Timer");
 
-        asr::print_message("Found GameManager");
+        let game_manager_binding = retry(|| GameManager::bind(&image, process, &mono_module)).await;
 
-        Ok(Self {
+        let game_manager_instance = retry(|| {
+            game_manager_binding
+                .class
+                .find_singleton(process, "<Instance>k__BackingField")
+        })
+        .await;
+
+        print_message("Found GameManager");
+
+        Self {
             timer_instance,
             game_manager_instance,
             timer_binding,
             game_manager_binding,
-        })
-    }
-}
-
-impl ProcessInfo {
-    fn new(process: Process) -> Self {
-        Self {
-            process,
-            game_info: None,
         }
     }
 }
@@ -167,107 +156,100 @@ impl Timer {
     }
 }
 
-#[derive(Default)]
-struct State {
-    process_info: Option<ProcessInfo>,
-    timer: Watcher<Timer>,
-    game_manager: Watcher<GameManager>,
-    run_time: Duration,
-    beyond_first_level: bool,
-}
+asr::async_main!(stable);
 
-impl State {
-    fn update(&mut self) {
-        if self.process_info.is_none() {
-            self.process_info = Process::attach("Lunistice.exe").map(ProcessInfo::new);
-        }
-        if let Some(process_info) = &mut self.process_info {
-            if !process_info.process.is_open() {
-                self.process_info = None;
-                return;
-            }
+async fn main() {
+    let mut run_time = Duration::ZERO;
+    let mut beyond_first_level = false;
 
-            if process_info.game_info.is_none() {
-                process_info.game_info = GameInfo::load(&process_info.process).ok();
-            }
+    loop {
+        let process = Process::wait_attach("Lunistice.exe").await;
+        process
+            .until_closes(async {
+                let game_info = GameInfo::load(&process).await;
 
-            if let Some(game_info) = &process_info.game_info {
-                let game_manager = self.game_manager.update(
-                    game_info
-                        .game_manager_binding
-                        .load(&process_info.process, game_info.game_manager_instance)
-                        .ok(),
-                );
+                let mut timer = Watcher::new();
+                let mut game_manager = Watcher::new();
+                let mut timer_state = Watcher::new();
 
-                let timer = self.timer.update(
-                    game_info
-                        .timer_binding
-                        .load(&process_info.process, game_info.timer_instance)
-                        .ok(),
-                );
+                loop {
+                    let game_manager = game_manager.update(
+                        game_info
+                            .game_manager_binding
+                            .load(&process, game_info.game_manager_instance)
+                            .ok(),
+                    );
 
-                if let (Some(game_manager), Some(timer)) = (game_manager, timer) {
-                    let mut buffer = itoa::Buffer::new();
-                    timer::set_variable("Points", buffer.format(game_manager._points));
-                    timer::set_variable("Resets", buffer.format(game_manager._deaths));
+                    let timer = timer.update(
+                        game_info
+                            .timer_binding
+                            .load(&process, game_info.timer_instance)
+                            .ok(),
+                    );
 
-                    let mut string_buffer = ArrayString::<32>::new();
-                    timer.currentLevelTimeVector.format_into(&mut string_buffer);
-                    timer::set_variable("Level Time", &string_buffer);
-                    string_buffer.clear();
-                    game_manager.format_level_into(&mut string_buffer);
-                    timer::set_variable("Level", &string_buffer);
-                    timer::set_variable("Character", timer.character());
+                    if let (Some(game_manager), Some(timer)) = (game_manager, timer) {
+                        let mut buffer = itoa::Buffer::new();
+                        timer::set_variable("Points", buffer.format(game_manager._points));
+                        timer::set_variable("Resets", buffer.format(game_manager._deaths));
 
-                    match timer::state() {
-                        TimerState::NotRunning => {
-                            if timer.check(|t| t.timerStopped == 0)
-                                && game_manager.currentLevel == LEVEL_1_1
-                            {
-                                self.run_time = Duration::ZERO;
-                                self.beyond_first_level = false;
-                                timer::start();
-                                timer::pause_game_time();
-                            }
+                        let mut string_buffer = ArrayString::<32>::new();
+                        timer.currentLevelTimeVector.format_into(&mut string_buffer);
+                        timer::set_variable("Level Time", &string_buffer);
+                        string_buffer.clear();
+                        game_manager.format_level_into(&mut string_buffer);
+                        timer::set_variable("Level", &string_buffer);
+                        timer::set_variable("Character", timer.character());
+
+                        let timer_state = timer_state.update_infallible(timer::state());
+
+                        // We do this here because the runner might start the
+                        // timer themselves.
+                        if timer_state.changed_from(&TimerState::NotRunning) {
+                            run_time = Duration::ZERO;
+                            beyond_first_level = false;
+                            timer::pause_game_time();
+                            timer::set_game_time(run_time);
                         }
-                        TimerState::Paused | TimerState::Running => {
-                            if timer.current.currentLevelTime < timer.old.currentLevelTime {
-                                if !self.beyond_first_level {
-                                    timer::reset();
-                                    return;
+
+                        match timer_state.current {
+                            TimerState::NotRunning => {
+                                if timer.check(|t| t.timerStopped == 0)
+                                    && game_manager.currentLevel == LEVEL_1_1
+                                {
+                                    timer::start();
                                 }
-                                self.run_time += Duration::seconds_f32(timer.old.currentLevelTime);
                             }
+                            TimerState::Paused | TimerState::Running => {
+                                if timer.current.currentLevelTime < timer.old.currentLevelTime {
+                                    if !beyond_first_level {
+                                        timer::reset();
+                                        return;
+                                    }
+                                    run_time += Duration::saturating_seconds_f32(
+                                        timer.old.currentLevelTime,
+                                    );
+                                }
 
-                            timer::set_game_time(
-                                self.run_time + Duration::seconds_f32(timer.currentLevelTime),
-                            );
+                                timer::set_game_time(
+                                    run_time
+                                        + Duration::saturating_seconds_f32(timer.currentLevelTime),
+                                );
 
-                            if game_manager.check(|g| g.gameState == game_state::RESULTS)
-                                || (game_manager.old.currentLevel >= LEVEL_7_2
-                                    && game_manager.current.currentLevel == LEVEL_2_1)
-                            {
-                                self.beyond_first_level = true;
-                                timer::split();
+                                if game_manager.check(|g| g.gameState == game_state::RESULTS)
+                                    || (game_manager.old.currentLevel >= LEVEL_7_2
+                                        && game_manager.current.currentLevel == LEVEL_2_1)
+                                {
+                                    beyond_first_level = true;
+                                    timer::split();
+                                }
                             }
+                            _ => {}
                         }
-                        TimerState::Ended => {}
                     }
+
+                    next_tick().await;
                 }
-            }
-        }
+            })
+            .await;
     }
-}
-
-static STATE: Spinlock<State> = const_spinlock(State {
-    process_info: None,
-    timer: Watcher::new(),
-    game_manager: Watcher::new(),
-    run_time: Duration::ZERO,
-    beyond_first_level: false,
-});
-
-#[no_mangle]
-pub extern "C" fn update() {
-    STATE.lock().update();
 }
