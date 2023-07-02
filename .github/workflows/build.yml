@@ -36,6 +36,7 @@ jobs:
           files: target/wasm32-unknown-unknown/release/lunistice_auto_splitter.wasm
           name: Latest
           tag_name: latest
+          body: This contains the latest version of the auto splitter.
 
   clippy:
     name: Check clippy lints

@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Ident, Lit, Meta};
+use syn::{Data, DeriveInput, Expr, ExprLit, Ident, Lit, Meta};
 
 #[proc_macro_derive(MonoClassBinding, attributes(namespace))]
 pub fn mono_class_binding(input: TokenStream) -> TokenStream {
@@ -18,15 +18,17 @@ pub fn mono_class_binding(input: TokenStream) -> TokenStream {
         .attrs
         .iter()
         .find_map(|x| {
-            let nv = match x.parse_meta().ok()? {
+            let nv = match &x.meta {
                 Meta::NameValue(nv) => nv,
                 _ => return None,
             };
             if nv.path.get_ident()? != "namespace" {
                 return None;
             }
-            match nv.lit {
-                Lit::Str(s) => Some(s.value()),
+            match &nv.value {
+                Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                }) => Some(s.value()),
                 _ => None,
             }
         })
