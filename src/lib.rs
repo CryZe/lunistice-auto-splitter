@@ -1,5 +1,9 @@
 #![no_std]
 #![allow(non_snake_case)] // TODO: Fix
+#![cfg_attr(
+    feature = "nightly",
+    feature(type_alias_impl_trait, const_async_blocks)
+)]
 
 use arrayvec::ArrayString;
 use asr_dotnet::{
@@ -156,7 +160,10 @@ impl Timer {
     }
 }
 
+#[cfg(not(feature = "nightly"))]
 asr::async_main!(stable);
+#[cfg(feature = "nightly")]
+asr::async_main!(nightly);
 
 async fn main() {
     let mut run_time = Duration::ZERO;

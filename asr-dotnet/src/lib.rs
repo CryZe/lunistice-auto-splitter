@@ -11,7 +11,7 @@ use asr::{future::retry, signature::Signature, Address, Address64, Process};
 
 pub use asr;
 pub use asr_dotnet_derive::*;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{AnyBitPattern, Pod, Zeroable};
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(transparent)]
@@ -49,7 +49,7 @@ impl<T> Ptr<T> {
     }
 }
 
-impl<T: Pod> Ptr<T> {
+impl<T: AnyBitPattern> Ptr<T> {
     pub fn read(self, process: &Process) -> Result<T, ()> {
         process.read(self.addr()).map_err(drop)
     }
@@ -180,30 +180,28 @@ unsafe impl<T: 'static + Copy> Pod for GList<T> {}
 unsafe impl<T> Zeroable for GList<T> {}
 
 #[cfg(not(feature = "il2cpp"))]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoAssembly {
     pub ref_count: i32,
-    _padding: [u8; 4],
     pub basedir: Ptr<CStr>,
     pub aname: MonoAssemblyName,
     pub image: Ptr<MonoImage>,
 }
 
 #[cfg(feature = "il2cpp")]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoAssembly {
     pub image: Ptr<MonoImage>,
     pub token: u32,
     pub referenced_assembly_start: i32,
     pub referenced_assembly_count: i32,
-    _padding: [u8; 4],
     pub aname: MonoAssemblyName,
 }
 
 #[cfg(not(feature = "il2cpp"))]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoAssemblyName {
     pub name: Ptr<CStr>,
@@ -211,7 +209,6 @@ pub struct MonoAssemblyName {
     pub hash_value: Ptr<CStr>,
     pub public_key: Ptr,
     pub public_key_token: [u8; 17],
-    _padding1: [u8; 3],
     pub hash_alg: u32,
     pub hash_len: u32,
     pub flags: u32,
@@ -223,11 +220,10 @@ pub struct MonoAssemblyName {
     pub without_version: MonoBoolean,
     pub without_culture: MonoBoolean,
     pub without_public_key_token: MonoBoolean,
-    _padding2: [u8; 3],
 }
 
 #[cfg(feature = "il2cpp")]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoAssemblyName {
     pub name: Ptr<CStr>,
@@ -244,7 +240,6 @@ pub struct MonoAssemblyName {
     pub revision: i32,
 
     pub public_key_token: [u8; 8],
-    _padding: [u8; 4],
 }
 
 #[cfg(not(feature = "il2cpp"))]
@@ -255,11 +250,10 @@ type MonoBoolean = u8;
 type MonoAssemblyNameInt = u16;
 
 #[cfg(not(feature = "il2cpp"))]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoImage {
     ref_count: i32,
-    _padding: [u8; 4],
     raw_data_handle: Ptr,
     raw_data: Ptr,
     raw_data_len: u32,
@@ -270,7 +264,6 @@ pub struct MonoImage {
     version: Ptr<CStr>,
     md_version_major: i16,
     md_version_minor: i16,
-    _padding2: [u8; 4],
     guid: Ptr<CStr>,
     image_info: Ptr,
     mempool: Ptr,
@@ -287,14 +280,11 @@ pub struct MonoImage {
     tables: [MonoTableInfo; MONO_TABLE_NUM],
     references: Ptr<Ptr<MonoAssembly>>,
     nreferences: i32,
-    _padding3: [u8; 4],
     modules: Ptr<Ptr<MonoImage>>,
     module_count: u32,
-    _padding4: [u8; 4],
     modules_loaded: Ptr, // to gboolean
     files: Ptr<Ptr<MonoImage>>,
     file_count: u32,
-    _padding5: [u8; 4],
     aot_module: Ptr,
     aotid: [u8; 16],
     assembly: Ptr<MonoAssembly>,
@@ -303,7 +293,7 @@ pub struct MonoImage {
 }
 
 #[cfg(feature = "il2cpp")]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoImage {
     name: Ptr<CStr>,
@@ -314,15 +304,11 @@ pub struct MonoImage {
     exported_type_count: u32,
     custom_attribute_count: u32,
 
-    _padding1: [u8; 4],
-
     metadata_handle: Ptr<i32>,
     name_to_class_hash_table: Ptr,
     code_gen_module: Ptr,
     token: u32,
     dynamic: u8,
-
-    _padding2: [u8; 3],
 }
 
 impl MonoImage {
@@ -379,12 +365,11 @@ unsafe impl<T> Zeroable for MonoInternalHashTable<T> {}
 #[cfg(not(feature = "il2cpp"))]
 const MONO_TABLE_NUM: usize = 56;
 
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoStreamHeader {
     data: Ptr,
     size: u32,
-    _padding: [u8; 4],
 }
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -396,7 +381,7 @@ pub struct MonoTableInfo {
     size_bitfield: u32,
 }
 
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoClassDef {
     pub klass: MonoClass,
@@ -405,7 +390,6 @@ pub struct MonoClassDef {
     pub first_field_idx: u32,
     pub method_count: u32,
     pub field_count: u32,
-    _padding: [u8; 4],
     pub next_class_cache: Ptr<MonoClass>,
 }
 
@@ -442,7 +426,7 @@ impl MonoClassDef {
 }
 
 #[cfg(not(feature = "il2cpp"))]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoClass {
     pub element_class: Ptr<MonoClass>,
@@ -450,13 +434,10 @@ pub struct MonoClass {
     pub supertypes: Ptr<Ptr<MonoClass>>,
     pub idepth: u16,
     pub rank: u8,
-    _padding1: u8,
     pub instance_size: i32,
     pub flags1: u32,
     pub min_align: u8,
-    _padding2: [u8; 3],
     pub flags2: u32,
-    _padding3: [u8; 4],
     pub parent: Ptr<MonoClass>,
     pub nested_in: Ptr<MonoClass>,
     pub image: Ptr<MonoImage>,
@@ -465,17 +446,14 @@ pub struct MonoClass {
     pub type_token: u32,
     pub vtable_size: i32,
     pub interface_count: u16,
-    _padding4: [u8; 2],
     pub interface_id: u32,
     pub max_interface_id: u32,
     pub interface_offsets_count: u16,
-    _padding5: [u8; 2],
     pub interfaces_packed: Ptr<Ptr<MonoClass>>,
     pub interface_offsets_packed: Ptr<u16>,
     pub interface_bitmap: Ptr<u8>,
     pub interfaces: Ptr<Ptr<MonoClass>>,
     pub sizes: i32,
-    _padding6: [u8; 4],
     pub fields: Ptr<MonoClassField>,
     pub methods: Ptr<Ptr>,
     pub this_arg: MonoType,
@@ -488,7 +466,7 @@ pub struct MonoClass {
 }
 
 #[cfg(feature = "il2cpp")]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoClass {
     image: Ptr<MonoImage>,
@@ -523,7 +501,6 @@ pub struct MonoClass {
     initialization_exception_gc_handle: u32,
     cctor_started: u32,
     cctor_finished: u32,
-    _padding1: [u8; 4],
     cctor_thread: u64,
     generic_container_handle: Ptr,
 
@@ -570,7 +547,6 @@ pub struct MonoClass {
     // is_import_or_windows_runtime: u8:1,
     // is_vtable_initialized: u8:1,
     // has_initialization_error: u8:1,
-    _padding2: [u8; 4],
 }
 
 impl MonoClass {
@@ -580,9 +556,11 @@ impl MonoClass {
         process: &Process,
         f: impl FnOnce(&[u8]) -> R,
     ) -> Result<R, ()> {
-        let mut buf = [0; 4 << 10];
+        let mut buf = [MaybeUninit::uninit(); 4 << 10];
         let buf = buf.get_mut(..self.instance_size as usize).ok_or(())?;
-        process.read_into_buf(instance.addr(), buf).map_err(drop)?;
+        let buf = process
+            .read_into_uninit_buf(instance.addr(), buf)
+            .map_err(drop)?;
         Ok(f(buf))
     }
 
@@ -631,14 +609,13 @@ impl MonoClass {
 
 type MonoGCDescriptor = Ptr;
 
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoType {
     data: Ptr,
     attrs: u16,
     r#type: u8,
     flags: u8,
-    _padding: [u8; 4],
 }
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -655,14 +632,13 @@ pub struct MonoClassRuntimeInfo {
 }
 
 #[cfg(not(feature = "il2cpp"))]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoClassField {
     pub r#type: Ptr<MonoType>,
     pub name: Ptr<CStr>,
     pub parent: Ptr<MonoClass>,
     pub offset: i32,
-    _padding: [u8; 4],
 }
 
 #[cfg(feature = "il2cpp")]
@@ -676,7 +652,7 @@ pub struct MonoClassField {
     pub token: u32,
 }
 
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, AnyBitPattern)]
 #[repr(C)]
 pub struct MonoVTable {
     klass: Ptr<MonoClass>,
@@ -688,9 +664,7 @@ pub struct MonoVTable {
     rank: u8,
     initialized: u8,
     flags: u8,
-    _padding1: u8,
     imt_collisions_bitmap: u32,
-    _padding2: [u8; 4],
     runtime_generic_context: Ptr,
 }
 
