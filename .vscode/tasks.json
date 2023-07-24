@@ -35,6 +35,18 @@
 			"problemMatcher": [
 				"$rustc"
 			]
+		},
+		{
+			"label": "Debug stable",
+			"type": "process",
+			"problemMatcher": [],
+			// Install the asr-debugger with:
+			// cargo install --git https://github.com/CryZe/asr-debugger
+			"command": "asr-debugger",
+			"args": [
+				"target${pathSeparator}wasm32-unknown-unknown${pathSeparator}release${pathSeparator}lunistice_auto_splitter.wasm",
+			],
+			"dependsOn": "Build stable"
 		}
 	]
 }
