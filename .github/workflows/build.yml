@@ -25,9 +25,31 @@ jobs:
 
       - name: Build
         env:
-          RUSTFLAGS: -Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128
+          RUSTFLAGS: -Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128,+multivalue
         run: |
           cargo +nightly build --locked --release --features nightly -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort
+
+      - name: Download binaryen
+        if: github.ref == 'refs/heads/master'
+        uses: robinraju/release-downloader@v1.7
+        with:
+          repository: "WebAssembly/binaryen"
+          latest: true
+          fileName: "binaryen-*-x86_64-linux.tar.gz"
+          out-file-path: "/home/runner/.cargo/bin"
+
+      - name: Install binaryen
+        if: github.ref == 'refs/heads/master'
+        run: |
+          cd ~/.cargo/bin
+          tar -xzf binaryen-*-x86_64-linux.tar.gz
+          mv binaryen*/bin/wasm* .
+
+      - name: Optimize
+        if: github.ref == 'refs/heads/master'
+        run: |
+          WASM_FILE=target/wasm32-unknown-unknown/release/lunistice_auto_splitter.wasm
+          wasm-opt -all -O4 "$WASM_FILE" -o "$WASM_FILE"
 
       - name: Release
         if: github.ref == 'refs/heads/master'

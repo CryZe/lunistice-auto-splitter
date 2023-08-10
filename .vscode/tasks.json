@@ -18,7 +18,7 @@
 			],
 			"options": {
 				"env": {
-					"RUSTFLAGS": "-Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128"
+					"RUSTFLAGS": "-Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128,+multivalue"
 				}
 			},
 			"problemMatcher": [
@@ -47,6 +47,18 @@
 				"target${pathSeparator}wasm32-unknown-unknown${pathSeparator}release${pathSeparator}lunistice_auto_splitter.wasm",
 			],
 			"dependsOn": "Build stable"
+		},
+		{
+			"label": "Debug nightly",
+			"type": "process",
+			"problemMatcher": [],
+			// Install the asr-debugger with:
+			// cargo install --git https://github.com/CryZe/asr-debugger
+			"command": "asr-debugger",
+			"args": [
+				"target${pathSeparator}wasm32-unknown-unknown${pathSeparator}release${pathSeparator}lunistice_auto_splitter.wasm",
+			],
+			"dependsOn": "Build nightly"
 		}
 	]
 }
