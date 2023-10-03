@@ -7,14 +7,15 @@
 use arrayvec::ArrayString;
 use asr::{
     future::next_tick,
-    game_engine::unity::il2cpp::{Class, Module, Version},
+    game_engine::unity::il2cpp::{Module, Version},
     print_message,
     time::Duration,
     timer::{self, TimerState},
     watcher::Watcher,
     Address, Process,
 };
-use bytemuck::{Pod, Zeroable};
+use asr_derive::Il2cppClass;
+use bytemuck_derive::{Pod, Zeroable};
 
 asr::panic_handler!();
 
@@ -110,7 +111,7 @@ impl GameManager {
     }
 }
 
-#[derive(Copy, Clone, Class)]
+#[derive(Copy, Clone, Il2cppClass)]
 struct GameManager {
     #[rename = "gameState"]
     game_state: i32,
@@ -122,7 +123,7 @@ struct GameManager {
     level: i32,
 }
 
-#[derive(Copy, Clone, Class)]
+#[derive(Copy, Clone, Il2cppClass)]
 struct Timer {
     #[rename = "currentLevelTime"]
     level_time: f32,

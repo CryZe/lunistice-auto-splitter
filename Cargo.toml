@@ -6,10 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-asr = { git = "https://github.com/LiveSplit/asr", features = ["derive", "unity"] }
 arrayvec = { version = "0.7.2", default-features = false }
+asr = { git = "https://github.com/LiveSplit/asr", features = ["unity"] }
+asr-derive = { git = "https://github.com/LiveSplit/asr", features = ["unity"] }
+bytemuck = { version = "1.9.1", features = ["min_const_generics"] }
+bytemuck_derive = "1.4.1"
 itoa = { version = "1.0.1", default-features = false }
-bytemuck = { version = "1.9.1", features = ["derive", "min_const_generics"] }
 
 [lib]
 crate-type = ["cdylib"]

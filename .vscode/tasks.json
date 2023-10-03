@@ -30,35 +30,27 @@
 			"type": "process",
 			"command": "cargo",
 			"args": [
-				"b"
+				"b",
+				"--release"
 			],
 			"problemMatcher": [
 				"$rustc"
 			]
 		},
 		{
-			"label": "Debug stable",
+			"label": "Watch stable",
 			"type": "process",
-			"problemMatcher": [],
-			// Install the asr-debugger with:
-			// cargo install --git https://github.com/CryZe/asr-debugger
-			"command": "asr-debugger",
+			"command": "cargo",
+			// Install the `cargo watch` subcommand from here:
+			// https://github.com/watchexec/cargo-watch?tab=readme-ov-file#install
 			"args": [
-				"target${pathSeparator}wasm32-unknown-unknown${pathSeparator}release${pathSeparator}lunistice_auto_splitter.wasm",
+				"watch",
+				"-x",
+				"b"
 			],
-			"dependsOn": "Build stable"
-		},
-		{
-			"label": "Debug nightly",
-			"type": "process",
-			"problemMatcher": [],
-			// Install the asr-debugger with:
-			// cargo install --git https://github.com/CryZe/asr-debugger
-			"command": "asr-debugger",
-			"args": [
-				"target${pathSeparator}wasm32-unknown-unknown${pathSeparator}release${pathSeparator}lunistice_auto_splitter.wasm",
-			],
-			"dependsOn": "Build nightly"
+			"problemMatcher": [
+				"$rustc"
+			]
 		}
 	]
 }
