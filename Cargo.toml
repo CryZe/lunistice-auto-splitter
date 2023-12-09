@@ -11,6 +11,7 @@ asr = { git = "https://github.com/LiveSplit/asr", features = ["unity"] }
 asr-derive = { git = "https://github.com/LiveSplit/asr", features = ["unity"] }
 bytemuck = { version = "1.9.1", features = ["min_const_generics"] }
 bytemuck_derive = "1.4.1"
+futures-util = { version = "0.3.29", default-features = false }
 itoa = { version = "1.0.1", default-features = false }
 
 [lib]

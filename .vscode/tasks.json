@@ -18,7 +18,7 @@
 			],
 			"options": {
 				"env": {
-					"RUSTFLAGS": "-Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128,+multivalue"
+					"RUSTFLAGS": "-Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128,+relaxed-simd,+multivalue"
 				}
 			},
 			"problemMatcher": [

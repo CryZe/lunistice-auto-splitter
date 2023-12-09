@@ -4,18 +4,21 @@
     feature(type_alias_impl_trait, const_async_blocks)
 )]
 
+use core::pin::pin;
+
 use arrayvec::ArrayString;
 use asr::{
-    future::next_tick,
-    game_engine::unity::il2cpp::{Module, Version},
+    future::{next_tick, retry},
+    game_engine::unity::il2cpp::{Class, Image, Module, Version},
     print_message,
     time::Duration,
     timer::{self, TimerState},
     watcher::Watcher,
-    Address, Process,
+    Address, Address64, Process,
 };
 use asr_derive::Il2cppClass;
 use bytemuck_derive::{Pod, Zeroable};
+use futures_util::future::{self, Either};
 
 asr::panic_handler!();
 
@@ -36,21 +39,33 @@ impl GameInfo {
 
         print_message("Found Assembly-CSharp");
 
-        let timer_class = Timer::bind(process, &module, &image).await;
-        let timer_instance = timer_class
-            .class()
-            .wait_get_static_instance(process, &module, "_instance")
-            .await;
-
-        print_message("Found Timer");
-
-        let game_manager_class = GameManager::bind(process, &module, &image).await;
+        let game_manager_class = GameManagerBinding::bind(process, &module, &image).await;
         let game_manager_instance = game_manager_class
             .class()
             .wait_get_static_instance(process, &module, "<Instance>k__BackingField")
             .await;
 
-        print_message("Found GameManager");
+        print_message(if game_manager_class.is_dlc() {
+            "Found GameManager (DLC)"
+        } else {
+            "Found GameManager (No DLC)"
+        });
+
+        let timer_class = Timer::bind(process, &module, &image).await;
+        let timer_instance = timer_class
+            .class()
+            .wait_get_static_instance(
+                process,
+                &module,
+                if game_manager_class.is_dlc() {
+                    "<Instance>k__BackingField"
+                } else {
+                    "_instance"
+                },
+            )
+            .await;
+
+        print_message("Found Timer");
 
         Self {
             timer_instance,
@@ -88,39 +103,166 @@ impl Digits {
     }
 }
 
-impl GameManager {
-    fn stage(&self) -> i32 {
-        ((self.level / 2) + 1).min(7)
+#[derive(Copy, Clone)]
+struct GameManager {
+    game_state: i32,
+    points: i32,
+    deaths: i32,
+    level_or_scene: LevelOrScene,
+}
+
+#[derive(Copy, Clone)]
+enum LevelOrScene {
+    Level(i32),
+    Scene(ArrayString<16>),
+}
+
+impl LevelOrScene {
+    const LEVEL_1_1: i32 = 0;
+    const LEVEL_2_1: i32 = 2;
+    const LEVEL_7_2: i32 = 13;
+    const LEVEL_7_X: i32 = 14;
+
+    fn is_in_first_level(&self) -> bool {
+        match self {
+            LevelOrScene::Level(v) => *v == Self::LEVEL_1_1,
+            LevelOrScene::Scene(s) => s == "Shrine01",
+        }
     }
 
-    fn act(&self) -> char {
-        if self.level == LEVEL_7_X {
+    fn stage(level: i32) -> i32 {
+        ((level / 2) + 1).min(7)
+    }
+
+    fn act(level: i32) -> char {
+        if level == Self::LEVEL_7_X {
             'X'
-        } else if self.level & 1 == 0 {
+        } else if level & 1 == 0 {
             '1'
         } else {
             '2'
         }
     }
 
-    fn format_level_into<const N: usize>(&self, string: &mut ArrayString<N>) {
+    fn format_level_into<const N: usize>(level: i32, string: &mut ArrayString<N>) {
         let mut buffer = itoa::Buffer::new();
-        let _ = string.try_push_str(buffer.format(self.stage()));
+        let _ = string.try_push_str(buffer.format(Self::stage(level)));
         let _ = string.try_push('-');
-        let _ = string.try_push(self.act());
+        let _ = string.try_push(Self::act(level));
+    }
+
+    fn set_variable<const N: usize>(&self, string: &mut ArrayString<N>) {
+        match self {
+            LevelOrScene::Level(level) => {
+                string.clear();
+                Self::format_level_into(*level, string);
+                timer::set_variable("Level", string);
+            }
+            LevelOrScene::Scene(scene) => {
+                timer::set_variable("Scene", scene);
+            }
+        }
+    }
+
+    fn is_in_final_level(&self) -> bool {
+        match self {
+            LevelOrScene::Level(level) => *level >= Self::LEVEL_7_2,
+            LevelOrScene::Scene(_) => false,
+        }
+    }
+
+    fn is_in_credits(&self) -> bool {
+        match self {
+            LevelOrScene::Level(level) => *level == Self::LEVEL_2_1,
+            LevelOrScene::Scene(_) => false,
+        }
     }
 }
 
-#[derive(Copy, Clone, Il2cppClass)]
-struct GameManager {
-    #[rename = "gameState"]
-    game_state: i32,
-    #[rename = "_points"]
-    points: i32,
-    #[rename = "_deaths"]
-    deaths: i32,
-    #[rename = "currentLevel"]
-    level: i32,
+enum GameManagerBinding {
+    Original(original::GameManagerBinding),
+    Dlc(dlc::GameManagerBinding),
+}
+
+impl GameManagerBinding {
+    async fn bind(process: &Process, module: &Module, image: &Image) -> Self {
+        let original = pin!(original::GameManager::bind(process, module, image));
+        let dlc = pin!(dlc::GameManager::bind(process, module, image));
+        match future::select(original, dlc).await {
+            Either::Left((original, _)) => Self::Original(original),
+            Either::Right((dlc, _)) => Self::Dlc(dlc),
+        }
+    }
+
+    fn class(&self) -> &Class {
+        match self {
+            GameManagerBinding::Original(original) => original.class(),
+            GameManagerBinding::Dlc(dlc) => dlc.class(),
+        }
+    }
+
+    #[must_use]
+    fn is_dlc(&self) -> bool {
+        matches!(self, Self::Dlc(..))
+    }
+
+    fn read(&self, process: &Process, game_manager_instance: Address) -> Result<GameManager, ()> {
+        Ok(match self {
+            GameManagerBinding::Original(original) => {
+                let game_manager = original.read(process, game_manager_instance)?;
+                GameManager {
+                    game_state: game_manager.game_state,
+                    points: game_manager.points,
+                    deaths: game_manager.deaths,
+                    level_or_scene: LevelOrScene::Level(game_manager.level),
+                }
+            }
+            GameManagerBinding::Dlc(dlc) => {
+                let game_manager = dlc.read(process, game_manager_instance)?;
+                GameManager {
+                    game_state: game_manager.game_state,
+                    points: game_manager.points,
+                    deaths: game_manager.deaths,
+                    level_or_scene: LevelOrScene::Scene(
+                        read_string(process, game_manager.current_scene_ptr).unwrap_or_default(),
+                    ),
+                }
+            }
+        })
+    }
+}
+
+mod original {
+    use asr_derive::Il2cppClass;
+
+    #[derive(Copy, Clone, Il2cppClass)]
+    pub struct GameManager {
+        #[rename = "gameState"]
+        pub game_state: i32,
+        #[rename = "_points"]
+        pub points: i32,
+        #[rename = "_deaths"]
+        pub deaths: i32,
+        #[rename = "currentLevel"]
+        pub level: i32,
+    }
+}
+
+mod dlc {
+    use asr::Address64;
+    use asr_derive::Il2cppClass;
+
+    #[derive(Copy, Clone, Il2cppClass)]
+    pub struct GameManager {
+        #[rename = "<GameState>k__BackingField"]
+        pub game_state: i32,
+        #[rename = "_points"]
+        pub points: i32,
+        #[rename = "_deaths"]
+        pub deaths: i32,
+        #[rename = "_currentScene"]
+        pub current_scene_ptr: Address64,
+    }
 }
 
 #[derive(Copy, Clone, Il2cppClass)]
@@ -133,11 +275,6 @@ struct Timer {
     timer_stopped: bool,
     character: u32,
 }
-
-const LEVEL_1_1: i32 = 0;
-const LEVEL_2_1: i32 = 2;
-const LEVEL_7_2: i32 = 13;
-const LEVEL_7_X: i32 = 14;
 
 #[allow(unused)]
 mod game_state {
@@ -157,9 +294,21 @@ impl Timer {
             0 => "Hana",
             1 => "Toree",
             2 => "Toukie",
+            3 => "Accel",
             _ => "Unknown",
         }
     }
+}
+
+fn read_string(process: &Process, ptr: Address64) -> Option<ArrayString<16>> {
+    let len = process.read::<u32>(ptr + 0x10).ok()? as usize;
+    let utf16_buf = &mut [0u16; 16][..len.min(16)];
+    let mut utf8_buf = ArrayString::<16>::new();
+    process.read_into_slice(ptr + 0x14, utf16_buf).ok()?;
+    for c in char::decode_utf16(utf16_buf.iter().copied()) {
+        let _ = utf8_buf.try_push(c.unwrap_or(char::REPLACEMENT_CHARACTER));
+    }
+    Some(utf8_buf)
 }
 
 #[cfg(not(feature = "nightly"))]
@@ -174,7 +323,11 @@ async fn main() {
     loop {
         asr::set_tick_rate(1.0);
 
-        let process = Process::wait_attach("Lunistice.exe").await;
+        let process = retry(|| {
+            Process::attach("Lunistice.exe").or_else(|| Process::attach("Lunistice-Demo.exe"))
+        })
+        .await;
+
         process
             .until_closes(async {
                 let game_info = GameInfo::load(&process).await;
@@ -208,9 +361,7 @@ async fn main() {
                         let mut string_buffer = ArrayString::<32>::new();
                         timer.level_time_vector.format_into(&mut string_buffer);
                         timer::set_variable("Level Time", &string_buffer);
-                        string_buffer.clear();
-                        game_manager.format_level_into(&mut string_buffer);
-                        timer::set_variable("Level", &string_buffer);
+                        game_manager.level_or_scene.set_variable(&mut string_buffer);
                         timer::set_variable("Character", timer.character());
 
                         let timer_state = timer_state.update_infallible(timer::state());
@@ -227,7 +378,7 @@ async fn main() {
                         match timer_state.current {
                             TimerState::NotRunning => {
                                 if timer.check(|t| !t.timer_stopped)
-                                    && game_manager.level == LEVEL_1_1
+                                    && game_manager.level_or_scene.is_in_first_level()
                                 {
                                     timer::start();
                                 }
@@ -247,8 +398,8 @@ async fn main() {
                                 );
 
                                 if game_manager.check(|g| g.game_state == game_state::RESULTS)
-                                    || (game_manager.old.level >= LEVEL_7_2
-                                        && game_manager.current.level == LEVEL_2_1)
+                                    || (game_manager.old.level_or_scene.is_in_final_level()
+                                        && game_manager.current.level_or_scene.is_in_credits())
                                 {
                                     beyond_first_level = true;
                                     timer::split();
