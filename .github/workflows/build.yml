@@ -4,9 +4,9 @@ on:
   pull_request:
   push:
     branches:
-      - 'master'
+      - "master"
     tags:
-      - '*'
+      - "*"
 
 jobs:
   build:
@@ -25,9 +25,9 @@ jobs:
 
       - name: Build
         env:
-          RUSTFLAGS: -Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128,+relaxed-simd,+multivalue
+          RUSTFLAGS: -Z unstable-options -C panic=immediate-abort -Z virtual-function-elimination -C lto -C target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128,+relaxed-simd,+multivalue
         run: |
-          cargo +nightly build --locked --release --features nightly -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort
+          cargo +nightly build --locked --release --features nightly -Z build-std=std,panic_abort
 
       - name: Download binaryen
         if: github.ref == 'refs/heads/master'

@@ -22,6 +22,12 @@ use futures_util::future::{self, Either};
 
 asr::panic_handler!();
 
+macro_rules! property {
+    ($i:ident) => {
+        concat!("<", stringify!($i), ">k__BackingField")
+    };
+}
+
 struct GameInfo {
     timer_instance: Address,
     game_manager_instance: Address,
@@ -42,28 +48,23 @@ impl GameInfo {
         let game_manager_class = GameManagerBinding::bind(process, &module, &image).await;
         let game_manager_instance = game_manager_class
             .class()
-            .wait_get_static_instance(process, &module, "<Instance>k__BackingField")
+            .wait_get_static_instance(process, &module, property!(Instance))
             .await;
 
-        print_message(if game_manager_class.is_dlc() {
-            "Found GameManager (DLC)"
+        print_message(if game_manager_class.is_dlc_demo() {
+            "Found GameManager (DLC Demo)"
         } else {
-            "Found GameManager (No DLC)"
+            "Found GameManager (Base Game)"
         });
 
         let timer_class = Timer::bind(process, &module, &image).await;
-        let timer_instance = timer_class
-            .class()
-            .wait_get_static_instance(
-                process,
-                &module,
-                if game_manager_class.is_dlc() {
-                    "<Instance>k__BackingField"
-                } else {
-                    "_instance"
-                },
-            )
-            .await;
+        let timer_instance = find_timer_instance(
+            process,
+            &module,
+            game_manager_class.is_dlc_demo(),
+            &timer_class,
+        )
+        .await;
 
         print_message("Found Timer");
 
@@ -179,9 +180,36 @@ impl LevelOrScene {
     }
 }
 
+async fn find_timer_instance(
+    process: &Process,
+    module: &Module,
+    is_dlc_demo: bool,
+    timer_class: &TimerBinding,
+) -> Address {
+    let v1_06 =
+        pin!(timer_class
+            .class()
+            .wait_get_static_instance(process, module, property!(Instance)));
+
+    let before = pin!(timer_class.class().wait_get_static_instance(
+        process,
+        module,
+        if is_dlc_demo {
+            property!(Instance)
+        } else {
+            "_instance"
+        },
+    ));
+
+    let (Either::Left((address, _)) | Either::Right((address, _))) =
+        future::select(v1_06, before).await;
+
+    address
+}
+
 enum GameManagerBinding {
     Original(original::GameManagerBinding),
-    Dlc(dlc::GameManagerBinding),
+    DlcDemo(dlc::GameManagerBinding),
 }
 
 impl GameManagerBinding {
@@ -190,20 +218,20 @@ impl GameManagerBinding {
         let dlc = pin!(dlc::GameManager::bind(process, module, image));
         match future::select(original, dlc).await {
             Either::Left((original, _)) => Self::Original(original),
-            Either::Right((dlc, _)) => Self::Dlc(dlc),
+            Either::Right((dlc, _)) => Self::DlcDemo(dlc),
         }
     }
 
     fn class(&self) -> &Class {
         match self {
             GameManagerBinding::Original(original) => original.class(),
-            GameManagerBinding::Dlc(dlc) => dlc.class(),
+            GameManagerBinding::DlcDemo(dlc) => dlc.class(),
         }
     }
 
     #[must_use]
-    fn is_dlc(&self) -> bool {
-        matches!(self, Self::Dlc(..))
+    fn is_dlc_demo(&self) -> bool {
+        matches!(self, Self::DlcDemo(..))
     }
 
     fn read(&self, process: &Process, game_manager_instance: Address) -> Result<GameManager, ()> {
@@ -217,7 +245,7 @@ impl GameManagerBinding {
                     level_or_scene: LevelOrScene::Level(game_manager.level),
                 }
             }
-            GameManagerBinding::Dlc(dlc) => {
+            GameManagerBinding::DlcDemo(dlc) => {
                 let game_manager = dlc.read(process, game_manager_instance)?;
                 GameManager {
                     game_state: game_manager.game_state,
@@ -289,12 +317,18 @@ mod game_state {
 }
 
 impl Timer {
-    fn character(&self) -> &'static str {
+    fn character(&self, is_dlc_demo: bool) -> &'static str {
         match self.character {
             0 => "Hana",
             1 => "Toree",
             2 => "Toukie",
-            3 => "Accel",
+            3 if !is_dlc_demo => "Erika",
+            4 if !is_dlc_demo => "Lea",
+            5 if !is_dlc_demo => "Null",
+            3 if is_dlc_demo => "Accel",
+            4 if is_dlc_demo => "Five",
+            6 if is_dlc_demo => "Cres",
+            7 if is_dlc_demo => "BoxBuddy",
             _ => "Unknown",
         }
     }
@@ -362,7 +396,10 @@ async fn main() {
                         timer.level_time_vector.format_into(&mut string_buffer);
                         timer::set_variable("Level Time", &string_buffer);
                         game_manager.level_or_scene.set_variable(&mut string_buffer);
-                        timer::set_variable("Character", timer.character());
+                        timer::set_variable(
+                            "Character",
+                            timer.character(game_info.game_manager_class.is_dlc_demo()),
+                        );
 
                         let timer_state = timer_state.update_infallible(timer::state());
 
